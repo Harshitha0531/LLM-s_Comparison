@@ -4,38 +4,7 @@ A web backend for side-by-side comparison of multiple LLM responses with confide
 
 ## High-Level Design
 
-```text
-User Input (Prompt / Document + optional page range)
-            |
-            v
-      FastAPI Endpoints
-  - POST /query (JSON)
-  - POST /query-file (multipart)
-            |
-            v
-   Input Processing Layer
-  - PDF/TXT extraction
-  - Page-range filtering
-  - Lightweight chunk retrieval
-            |
-            v
-     Inference Orchestrator
-  - Compare modes: run TinyLlama + Phi-2
-  - Cascade modes: TinyLlama first, Phi-2 on low confidence
-            |
-            v
-      Evaluation Layer
-  - latency per model
-  - relevance/confidence
-  - truncation detection
-  - token usage estimate
-            |
-            v
-       JSON Response
-  - best_model
-  - final_answer
-  - side-by-side outputs
-```
+![Architecture](./architecture_diagram.png)
 
 ## Implementation Details
 
