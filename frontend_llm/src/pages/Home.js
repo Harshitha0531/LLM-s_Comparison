@@ -117,7 +117,7 @@ export default function Home() {
         throw new Error(data.error);
       }
       setResult(data);
-      setHasChosenMode(false); // clear once the backend response is received
+      setHasChosenMode(false); 
 
       const bestFromBackend = data.best_model;
       const bestModelForDisplay =
@@ -218,10 +218,10 @@ export default function Home() {
   className="w-full p-2 rounded-lg bg-white/10 mb-3 outline-none focus:ring-2 focus:ring-indigo-400 text-center text-lg"
   placeholder="Ask something..."
   value={query}
-  disabled={file !== null}   // ✅ prevent both inputs
+  disabled={file !== null}   
   onChange={(e) => {
     setQuery(e.target.value);
-    setMessage(""); // ✅ clear message on typing
+    setMessage(""); 
 
     if (file) {
       setFile(null);
@@ -236,10 +236,10 @@ export default function Home() {
           <input
   type="file"
   hidden
-  disabled={query !== ""}   // ✅ prevent both inputs
+  disabled={query !== ""}   
   onChange={(e) => {
     setFile(e.target.files[0]);
-    setMessage(""); // clear old message
+    setMessage(""); 
 
     if (query) {
       setQuery("");
@@ -251,7 +251,7 @@ export default function Home() {
 
    {/* Mode */}
 <button
-  onClick={() => setShowModeOptions(!showModeOptions)}   // ✅ فقط toggle
+  onClick={() => setShowModeOptions(!showModeOptions)}   
   className="w-full py-2 text-xl bg-gradient-to-r from-indigo-500 to-purple-500 rounded-lg font-semibold"
 >
   {hasChosenMode ? mode.replace("_", " ").toUpperCase() : "Choose Mode"}
@@ -268,7 +268,7 @@ export default function Home() {
           setShowModeOptions(false);
           setMessage(`✅ ${m.replace("_", " ").toUpperCase()} selected`);
 
-          // auto clear message
+          
           setTimeout(() => setMessage(""), 2000);
         }}
         className={`py-2 text-sm rounded-lg ${
