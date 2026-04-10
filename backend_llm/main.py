@@ -24,7 +24,7 @@ from utils import (
 app = FastAPI()
 
 # =========================
-# CORS (Frontend Connection)
+#  🔹CORS (Frontend Connection)
 # =========================
 app.add_middleware(
     CORSMiddleware,
@@ -35,21 +35,21 @@ app.add_middleware(
 )
 
 # =========================
-# ROOT
+# 🔹ROOT
 # =========================
 @app.get("/", response_class=PlainTextResponse)
 async def root():
     return "API is running"
 
 # =========================
-# REST API (NON-STREAMING)
+# 🔹REST API (NON-STREAMING)
 # =========================
 def run_comparison(text: str, question: str, mode: str, task: str):
     text = text.strip()
     cfg = get_mode_config(mode)
 
     # -------------------------
-    # RAG
+    # 🔹RAG
     # -------------------------
     chunks = chunk_text(text, size=cfg["chunk_size"])
     # For short text, skip retrieval entirely (faster + cleaner).
@@ -60,7 +60,7 @@ def run_comparison(text: str, question: str, mode: str, task: str):
     context = " ".join(relevant_chunks)
 
     # -------------------------
-    # MODEL RUN
+    # 🔹MODEL RUN
     # -------------------------
     start1 = time.time()
     res1 = run_model_with_retry(
@@ -195,7 +195,7 @@ async def query_file_endpoint(
         return {"error": str(e)}
 
 # =========================
-# WEBSOCKET STREAMING (Mock for now)
+# 🔹WEBSOCKET STREAMING (Mock for now)
 # =========================
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
