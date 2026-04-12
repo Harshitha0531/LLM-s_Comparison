@@ -1,6 +1,8 @@
 import re
+import threading
 from typing import Optional
 from PyPDF2 import PdfReader
+from transformers import TextIteratorStreamer
 
 
 # =========================
@@ -92,11 +94,7 @@ Answer:
 """
     else:
         prompt = f"""
-Summarize the document clearly.
-
-- Main topic
-- Key entities
-- Important details
+Write a clear 2-3 sentence summary of the document below. Include the main topic, key entities, and important details. Do not use bullet points or labels.
 
 Document:
 {context}
@@ -154,11 +152,7 @@ Document:
 Final summary:
 """
     return f"""
-Summarize the document clearly.
-
-- Main topic
-- Key entities
-- Important details
+Write a clear 2-3 sentence summary of the document below. Include the main topic, key entities, and important details. Do not use bullet points or labels.
 
 Document:
 {context}
@@ -250,37 +244,42 @@ def get_mode_config(mode: str) -> dict:
         "top_k": 1,
         "short_text_limit": 1200,
         "context_limit": 800,
-        "max_tokens": 60,
+        "max_tokens": 120,
     }
 
 
 def score_confidence(context: str, question: str, response: str, task: str) -> float:
+    # Return 0 immediately for known failure strings.
+    if "Not enough" in response:
+        return 0.0
+
     ctx_tokens = _tokenize(context)
     q_tokens = _tokenize(question)
     resp_tokens = _tokenize(response)
     if not resp_tokens:
         return 0.0
+
     context_overlap = len(ctx_tokens.intersection(resp_tokens)) / len(resp_tokens)
     question_overlap = len(q_tokens.intersection(resp_tokens)) / max(len(q_tokens), 1)
     if task == "qa":
-        # For short QA prompts, query-word coverage is a better confidence signal.
         overlap = (0.55 * context_overlap) + (0.45 * question_overlap)
     else:
         overlap = (0.8 * context_overlap) + (0.2 * question_overlap)
+
     words = response.split()
     length_bonus = 0.1 if len(words) >= 20 else 0.0
-    penalty = 0.15 if "Not enough" in response else 0.0
+    penalty = 0.0
 
-    # Penalize likely truncation/incomplete endings.
+    # Mild penalty for truncated endings.
     bad_tail_tokens = {"is", "are", "was", "were", "to", "of", "for", "at", "in"}
     tail = response.strip()
     last_word = words[-1].lower() if words else ""
     if tail.endswith((":", "-", ",", ";")) or last_word in bad_tail_tokens:
-        penalty += 0.2
+        penalty += 0.08
 
-    # Penalize very short outputs even with token overlap.
+    # Mild penalty for very short outputs.
     if len(words) < 12:
-        penalty += 0.15
+        penalty += 0.05
 
     raw_score = overlap + length_bonus - penalty
     return round(max(0.0, min(0.95, raw_score)), 2)
@@ -323,3 +322,52 @@ def extract_pdf_text(reader: PdfReader, page_start: Optional[int], page_end: Opt
         if page_text:
             text += page_text + "\n"
     return text
+
+
+# =========================
+# 🔹 REAL-TIME STREAMING
+# =========================
+def stream_model(model, context: str, question: str, task: str, max_tokens: int = 120, context_limit: int = 800):
+    """
+    Yields tokens one by one using TextIteratorStreamer.
+    Runs model inference in a background thread so the main thread can stream.
+    """
+    context = context[:context_limit]
+    if task == "qa":
+        prompt = f"""Answer clearly in 2-3 sentences.
+
+Context:
+{context}
+
+Question:
+{question}
+
+Answer:
+"""
+    else:
+        prompt = f"""Write a clear 2-3 sentence summary of the document below. Include the main topic, key entities, and important details. Do not use bullet points or labels.
+
+Document:
+{context}
+
+Summary:
+"""
+    tokenizer = model.tokenizer
+    streamer = TextIteratorStreamer(tokenizer, skip_prompt=True, skip_special_tokens=True)
+    inputs = tokenizer(prompt, return_tensors="pt")
+
+    generation_kwargs = {
+        **inputs,
+        "max_new_tokens": max_tokens,
+        "do_sample": False,
+        "temperature": 0.2,
+        "streamer": streamer,
+    }
+
+    thread = threading.Thread(target=model.model.generate, kwargs=generation_kwargs)
+    thread.start()
+
+    for token in streamer:
+        yield token
+
+    thread.join()
