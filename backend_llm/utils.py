@@ -6,7 +6,7 @@ from transformers import TextIteratorStreamer
 
 
 # =========================
-# 🔹 CHUNKING
+# CHUNKING
 # =========================
 def chunk_text(text, size=220):
     words = text.split()
@@ -14,11 +14,10 @@ def chunk_text(text, size=220):
 
 
 def estimate_tokens(text: str) -> int:
-    # Cheap approximation suitable for model-to-model comparison.
     return max(1, int(len(re.findall(r"\S+", text)) * 1.3))
 
 # =========================
-# 🔹 RETRIEVAL (LIGHTWEIGHT)
+# RETRIEVAL (LIGHTWEIGHT)
 # =========================
 def _tokenize(text: str) -> set:
     return set(re.findall(r"[a-zA-Z0-9]+", text.lower()))
@@ -37,13 +36,13 @@ def retrieve_relevant_chunks(query, chunks, top_k=1):
     return ranked[:top_k]
 
 # =========================
-# 🔹 TASK DETECTION
+# TASK DETECTION
 # =========================
 def detect_task(query, file):
     return "document" if file else "qa"
 
 # =========================
-# 🔹 CLEAN OUTPUT
+# CLEAN OUTPUT
 # =========================
 def clean_output(text):
     text = re.sub(r"\s+", " ", text).strip()
@@ -69,14 +68,14 @@ def clean_output(text):
         uppercase_ratio = sum(1 for w in words if len(w) > 2 and w.isupper()) / len(words)
         if uppercase_ratio > 0.35:
             text = text.capitalize()
-    # Trim noisy tail fragments frequently produced by OCR chunks.
+
     text = re.sub(r"(name of entity|amt\(rs\)|particular amt\(rs\)).*$", "", text, flags=re.IGNORECASE).strip()
     if len(text.split()) < 5:
         return "Not enough clean information available."
     return text.strip()
 
 # =========================
-# 🔹 GENERATION
+# GENERATION
 # =========================
 def run_model(model, context, question, task="qa", max_tokens=60, context_limit=800):
     context = context[:context_limit]
@@ -185,7 +184,7 @@ def run_model_with_retry(model, context, question, task="qa", max_tokens=60, con
         result = result.split(stop)[0]
     cleaned = clean_output(result)
 
-    # Prefer the retry output only when it actually improved.
+   
     if len(cleaned.split()) > len(res.split()):
         return cleaned
     return res
@@ -325,7 +324,7 @@ def extract_pdf_text(reader: PdfReader, page_start: Optional[int], page_end: Opt
 
 
 # =========================
-# 🔹 REAL-TIME STREAMING
+# REAL-TIME STREAMING
 # =========================
 def stream_model(model, context: str, question: str, task: str, max_tokens: int = 120, context_limit: int = 800):
     """
