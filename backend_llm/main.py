@@ -19,12 +19,13 @@ from utils import (
     detect_truncation,
     extract_pdf_text,
     _tokenize,
+    stream_model,
 )
 
 app = FastAPI()
 
 # =========================
-#  🔹CORS (Frontend Connection)
+# 🔹 CORS (Frontend Connection)
 # =========================
 app.add_middleware(
     CORSMiddleware,
@@ -35,21 +36,21 @@ app.add_middleware(
 )
 
 # =========================
-# 🔹ROOT
+# 🔹 ROOT
 # =========================
 @app.get("/", response_class=PlainTextResponse)
 async def root():
     return "API is running"
 
 # =========================
-# 🔹REST API (NON-STREAMING)
+# 🔹 REST API (NON-STREAMING)
 # =========================
 def run_comparison(text: str, question: str, mode: str, task: str):
     text = text.strip()
     cfg = get_mode_config(mode)
 
     # -------------------------
-    # 🔹RAG
+    # RAG
     # -------------------------
     chunks = chunk_text(text, size=cfg["chunk_size"])
     # For short text, skip retrieval entirely (faster + cleaner).
@@ -60,7 +61,7 @@ def run_comparison(text: str, question: str, mode: str, task: str):
     context = " ".join(relevant_chunks)
 
     # -------------------------
-    # 🔹MODEL RUN
+    # MODEL RUN
     # -------------------------
     start1 = time.time()
     res1 = run_model_with_retry(
@@ -78,7 +79,7 @@ def run_comparison(text: str, question: str, mode: str, task: str):
     rel1 = score_confidence(context, question, res1, task)
     trunc1 = detect_truncation(res1)
     if trunc1:
-        rel1 = round(max(0.0, rel1 - 0.25), 2)
+        rel1 = round(max(0.0, rel1 - 0.08), 2)
 
     response_payload = {
         "mode": cfg["mode"],
@@ -121,10 +122,32 @@ def run_comparison(text: str, question: str, mode: str, task: str):
         rel2 = score_confidence(context, question, res2, task)
         trunc2 = detect_truncation(res2)
         if trunc2:
-            rel2 = round(max(0.0, rel2 - 0.25), 2)
+            rel2 = round(max(0.0, rel2 - 0.08), 2)
         r1_tokens = _tokenize(res1)
         r2_tokens = _tokenize(res2)
-        agree = round(len(r1_tokens.intersection(r2_tokens)) / max(len(r1_tokens.union(r2_tokens)), 1), 2)
+        union = r1_tokens.union(r2_tokens)
+        # If Phi-2 failed entirely, don't penalize agreement — use TinyLlama as winner.
+        if "Not enough" in res2:
+            response_payload["escalated_to_phi2"] = True
+            response_payload["model_agreement"] = rel1
+            response_payload["best_model"] = "TinyLlama"
+            response_payload["final_answer"] = res1
+            response_payload["results"].append(
+                {
+                    "model": "Phi-2",
+                    "response": res2,
+                    "latency": latency2,
+                    "relevance": 0.0,
+                    "truncation_detected": trunc2,
+                    "token_usage_estimate": estimate_tokens(res2)
+                }
+            )
+            return response_payload
+        # If one model failed, use the winner's relevance as the agreement score.
+        if "Not enough" in res1:
+            agree = rel2
+        else:
+            agree = round(len(r1_tokens.intersection(r2_tokens)) / max(len(union), 1), 2)
 
         best_model = "TinyLlama" if rel1 >= rel2 else "Phi-2"
         winner_text = res1 if best_model == "TinyLlama" else res2
@@ -195,41 +218,70 @@ async def query_file_endpoint(
         return {"error": str(e)}
 
 # =========================
-# 🔹WEBSOCKET STREAMING (Mock for now)
+# 🔥 WEBSOCKET STREAMING (Real)
 # =========================
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     data = await websocket.receive_json()
     query = data.get("query", "")
-    mode = data.get("mode", "compare")
+    mode = data.get("mode", "compare_fast")
+    task = "qa"
 
-    models = ["TinyLlama", "Phi-2"]
+    cfg = get_mode_config(mode)
+    chunks = chunk_text(query, size=cfg["chunk_size"])
+    context = query if len(query) <= cfg["short_text_limit"] else " ".join(
+        retrieve_relevant_chunks(query, chunks, top_k=cfg["top_k"])
+    )
+
     results = []
 
-    for m in models:
-        response_text = f"{m} is generating response for: {query}"
+    for model_name, model in [("TinyLlama", model1), ("Phi-2", model2)]:
+        await websocket.send_json({"type": "start", "model": model_name})
         partial = ""
-        for ch in response_text:
-            partial += ch
-            await websocket.send_json({
-                "model": m,
-                "token": ch,
-                "partial": partial
-            })
-            await asyncio.sleep(0.01)
+        start = asyncio.get_event_loop().time()
 
+        try:
+            for token in stream_model(model, context, query, task, max_tokens=cfg["max_tokens"], context_limit=cfg["context_limit"]):
+                partial += token
+                await websocket.send_json({
+                    "type": "token",
+                    "model": model_name,
+                    "token": token,
+                    "partial": partial
+                })
+                await asyncio.sleep(0)  # yield control to event loop
+        except Exception as e:
+            await websocket.send_json({"type": "error", "model": model_name, "message": str(e)})
+            partial = "Error during generation."
+
+        latency = round(asyncio.get_event_loop().time() - start, 2)
+        relevance = score_confidence(context, query, partial, task)
         results.append({
-            "model": m,
-            "response": response_text,
-            "latency": len(response_text) * 0.01,
-            "relevance": 0.8
+            "model": model_name,
+            "response": partial,
+            "latency": latency,
+            "relevance": relevance,
         })
+
+        await websocket.send_json({"type": "done", "model": model_name, "latency": latency, "relevance": relevance})
+
+        # Cascade: skip Phi-2 if TinyLlama was confident enough
+        if cfg["strategy"] == "cascade" and results[0]["relevance"] >= cfg.get("confidence_threshold", 0.82):
+            break
+
+    best = max(results, key=lambda r: r["relevance"])
+    r1_tokens = _tokenize(results[0]["response"]) if len(results) > 0 else set()
+    r2_tokens = _tokenize(results[1]["response"]) if len(results) > 1 else set()
+    union = r1_tokens.union(r2_tokens)
+    agreement = round(len(r1_tokens.intersection(r2_tokens)) / max(len(union), 1), 2) if union else 1.0
 
     await websocket.send_json({
         "type": "final",
         "results": results,
-        "best_model": "TinyLlama",
-        "semantic_similarity": 0.87,
-        "mode": mode
+        "best_model": best["model"],
+        "final_answer": best["response"],
+        "model_agreement": agreement,
+        "mode": cfg["mode"],
     })
+
