@@ -60,6 +60,25 @@ A web backend for side-by-side comparison of multiple LLM responses with confide
 - Cascade only escalates on low confidence or truncation.
 - Outputs include latency and token usage estimates.
 
+## Pros
+
+- No external API calls — both models run fully locally, so there are no token costs or data privacy concerns.
+- Cascade mode is compute-efficient — Phi-2 only runs when TinyLlama's confidence is below threshold, saving significant time on straightforward queries.
+- Transparent scoring — every response includes latency, relevance, truncation flag, and token estimate, so you can see exactly why one model was picked over the other.
+- PDF page-range support — you can target specific sections of a document instead of feeding the entire file, which keeps context clean and inference fast.
+- Retry logic — if a model produces a weak or incomplete answer, it automatically retries with a stricter prompt before giving up.
+- Lexical RAG without embeddings — chunk retrieval uses token overlap scoring, which is fast and requires no vector database or embedding model.
+- Real-time token streaming — the `/ws` WebSocket endpoint streams actual model tokens as they are generated using `TextIteratorStreamer`, giving the frontend live output.
+
+## Future Enhancements
+
+- **GPU support** — add `device_map="auto"` and CUDA detection so the models automatically use a GPU when available, reducing latency from minutes to seconds.
+- **Swap or extend models** — the architecture already supports adding more pipelines (e.g. Qwen, Mistral); a model registry config would make this plug-and-play without touching core logic.
+- **Semantic similarity scoring** — replace lexical overlap with a lightweight embedding model (e.g. `sentence-transformers/all-MiniLM-L6-v2`) for more accurate relevance and agreement scores.
+- **Quantization** — load models in 4-bit or 8-bit via `bitsandbytes` to cut memory usage and speed up CPU inference significantly.
+- **Caching** — cache responses for repeated queries using a simple hash-based store to avoid re-running expensive inference.
+- **Frontend integration** — connect the React frontend fully to all four modes with real-time progress indicators and side-by-side diff highlighting.
+
 ## Security Notes
 
 - Credentials should be stored in environment variables only.
